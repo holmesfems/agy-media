@@ -1,6 +1,6 @@
 ---
 name: agy-media
-description: Claude Code から Antigravity CLI（agy、Gemini）を呼び出して、Claude にできないこと・苦手なことを補うスキル。画像の生成、音声（wav・mp3・動画の音）を聞いての文字起こし・話者分け・発音やアクセントの違和感の指摘、画像や動画のコマの解析（場面の説明・物の位置のおおよその座標）を agy に頼み、その前後の機械的な作業（ffmpeg での切り出し・コマ画像化・座標の目盛り、無音区間・音量・スペクトログラム、OpenCV での追跡、結果の描き込み確認）はローカルのスクリプトで行う。「agy で画像を作って」「Gemini に画像生成させて」「この音声を聞いて」「文字起こしして」「アクセントおかしいところ探して」「この動画を agy に見せて」「◯秒から◯秒を解析」「敵の座標を追跡」「agy を呼び出して」のように、agy・Antigravity・Gemini を使った画像・動画・音声の話が出たら、明示的な指定がなくても使うこと。Use for image generation and image / video / audio analysis through the agy (Antigravity) CLI.
+description: Claude Code から Antigravity CLI（agy、Gemini）を呼び出して、Claude にできないこと・苦手なことを補うスキル。画像の生成、動画の書き出しを見て・聞いての BGM の確認（曲調が場面に合うか・つなぎ目）と声と BGM の音量差の測定、音声（wav・mp3・動画の音）を聞いての文字起こし・話者分け・発音やアクセントの違和感の指摘、画像や動画のコマの解析（場面の説明・物の位置のおおよその座標）を agy に頼み、その前後の機械的な作業（ffmpeg での切り出し・コマ画像化・座標の目盛り、無音区間・音量・スペクトログラム、OpenCV での追跡、結果の描き込み確認）はローカルのスクリプトで行う。「agy で画像を作って」「Gemini に画像生成させて」「BGM 合ってるか見て」「BGM が大きすぎないか」「この音声を聞いて」「文字起こしして」「アクセントおかしいところ探して」「この動画を agy に見せて」「◯秒から◯秒を解析」「敵の座標を追跡」「agy を呼び出して」のように、agy・Antigravity・Gemini を使った画像・動画・音声の話が出たら、明示的な指定がなくても使うこと。Use for image generation and image / video / audio analysis through the agy (Antigravity) CLI.
 ---
 
 # agy-media
@@ -12,6 +12,8 @@ Claude は画像を「見る」ことはできるが、**画像を作る・音�
 |---|---|
 | 画像を作る | agy（組み込みの画像生成） |
 | 音声の文字起こし・話者分け・発音の違和感 | agy（`gemini-4-argon-high`） |
+| BGM が場面に合うか（曲調・テンポ・雰囲気）・つなぎ目 | agy（`gemini-4-argon-high`、mp4 をそのまま） |
+| 声と BGM の音量差・声が埋もれる区間 | `mix_balance.py`（声だけのトラックと完成品を比べる） |
 | 無音区間・音量（LUFS）・波形／スペクトログラム | `audio.py`（ffmpeg） |
 | 動画の切り出し・コマ画像・座標の目盛り | `frames.py`（ffmpeg） |
 | 画像・コマの意味（何が起きているか、何秒に何が） | agy または Claude 自身 |
@@ -20,7 +22,7 @@ Claude は画像を「見る」ことはできるが、**画像を作る・音�
 | 結果の確認 | `overlay.py` で描き込んだ画像を Claude が Read で見る |
 
 スクリプトはこのスキルのフォルダの `scripts/` にある（以下 `<skill>/scripts/`）。どれも `python -I <script> -h` で使い方が出る。
-必要なもの: `agy`（ログイン済み）、Python 3 と Pillow、ffmpeg（PATH に無ければ `pip install imageio-ffmpeg`）、追跡するなら opencv-python。
+必要なもの: `agy`（ログイン済み）、Python 3 と Pillow、ffmpeg（PATH に無ければ `pip install imageio-ffmpeg`）、追跡・音量差には opencv-python（numpy）。
 
 ## 守ること
 
@@ -56,6 +58,27 @@ python -I <skill>/scripts/agy_run.py --prompt-file <work>/ask.txt --dir <work> -
 - モデルは `gemini-4-argon-high`。Flash では音声のあとに出力が途切れて失敗した。40 秒で 1 分ほど。長い音声は 30〜60 秒ずつに分ける。
 - 文字起こし・話者分けはかなり正確（読み上げ台本 40 秒でほぼ一致）。発音の指摘は**候補**として扱い、ユーザーに聞いて確かめてもらう。
 - Claude 自身も `spectrum.png` / `wave.png` を Read で見れば、音の有無・高さの動き・BGM や効果音の入り方はおおまかに分かる。
+
+## BGM を確かめる（動画の書き出しを見て・聞いてもらう）
+
+agy は mp4 を**映像と音の両方**で理解できる（ロゴの文字・画面のタイトル・最初のセリフまで正しく答えた）。
+「この BGM は場面に合っているか」のような、Claude が波形を見ても分からない判断を頼める。
+
+```
+ffmpeg -ss 0 -to 40 -i <書き出した動画> -vf "scale=1280:-2,fps=30" -c:v libx264 -crf 28 -c:a aac -b:a 160k <work>/clip.mp4
+python -I <skill>/scripts/agy_run.py --prompt-file <work>/ask.txt --dir <work> --model gemini-4-argon-high --save <work>/agy.json
+python -I <skill>/scripts/mix_balance.py <書き出した動画> <声だけのトラック> --start 0 --end 40 --out <work>/balance.json
+```
+- 渡す mp4 は 30〜60 秒、720p・30fps に落とす（40 秒 3 MB で 1 分半ほど）。
+- `ask.txt` には、まず**見えた・聞こえた証拠**（冒頭のロゴの文字、画面のタイトル 2 つ、最初のセリフ）を書かせ、それから
+  BGM のジャンル・テンポ・雰囲気・楽器、場面に合うか（1〜5 と理由）、声が聞き取りにくい時刻、不自然なつなぎ目、直し方の案、を日本語で答えさせる。
+  場面の説明（例: 落ち着いた解説の導入、暗い SF 調の UI）も添える。
+- **agy の「合う・合わない」は 1 つの意見**として伝える。曲選びはユーザーの好みとシリーズの雰囲気で決まる。
+- **音量の判断は数値で裏を取る。** agy は「BGM が大きめ」という全体の傾向は当てたが、「声が埋もれている」と挙げた時刻は、測ると一番聞き取りやすい区間だった。
+  場所の特定は `mix_balance.py` の `buried_spans` を使う。
+- `mix_balance.py` は声だけのトラックを完成品に自動で位置合わせして差し引き、残り（BGM＋効果音）との差を 0.5 秒ごとに出す。
+  トーク動画の目安は BGM が声より 12〜20 dB 下。差が `--min-db`（既定 6 dB）未満の区間を `buried_spans` に挙げる。
+  文末で声が小さくなる所や、ゲーム音が鳴っている所も拾うので、数字を見て判断する。声に強い EQ・リバーブをかけていると BGM が大きめに出る。
 
 ## 画像・動画を見てもらう
 
