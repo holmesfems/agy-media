@@ -1,0 +1,8 @@
+{
+  "name": "agy-media",
+  "version": "0.1.0",
+  "description": "Let Claude Code use the Antigravity CLI (agy / Gemini) for image generation and for looking at images, video and audio, with local helpers (ffmpeg, OpenCV) to prepare inputs and check the answers.",
+  "author": { "name": "holmesfems" },
+  "license": "MIT",
+  "keywords": ["agy", "antigravity", "gemini", "image", "video", "audio"]
+}

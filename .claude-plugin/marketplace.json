@@ -1,0 +1,11 @@
+{
+  "name": "agy-media",
+  "owner": { "name": "holmesfems" },
+  "plugins": [
+    {
+      "name": "agy-media",
+      "source": "./",
+      "description": "Image generation and image / video / audio analysis through the Antigravity CLI (agy)."
+    }
+  ]
+}
