@@ -318,7 +318,7 @@ def main():
         sys.exit(f"diff is larger than {a.max_diff_kb} KB: review it in parts (--commit, or a narrower --base), or raise --max-diff-kb")
     hits = secret_like_lines(diff)
     if hits and not a.allow_secret_like:
-        print(json.dumps({"status": "STOPPED", "reason": "added lines look like secrets; nothing was sent",
+        print(json.dumps({"status": "STOPPED", "reason": "lines of the diff look like secrets; nothing was sent",
                           "lines": hits}, ensure_ascii=False, indent=2))
         sys.exit(4)
 
