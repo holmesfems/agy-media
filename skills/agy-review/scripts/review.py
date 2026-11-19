@@ -2,15 +2,18 @@
 
 Gemini is trained apart from Claude, so its blind spots differ. Use it as a second
 reviewer: it reads the diff (and the repository around it, read-only) and returns
-findings as JSON. Several models can run in parallel; findings that land on the same
-place are merged so you can see which ones more than one model agrees on.
+findings as JSON. The default reviewer is Neon; with --model repeated, several models
+run in parallel and findings that land on the same place are merged so you can see
+which ones more than one model agrees on.
 
 The answers are candidates, not verdicts: check each one in the code yourself.
 
 - agy runs in plan mode (read-only) and is told not to use a terminal, the web, or
   files outside the repository. Never passes --dangerously-skip-permissions.
-- Files that usually hold secrets (.env, keys, credentials) are left out of the diff,
-  and the run stops if an added line looks like a secret (see --allow-secret-like).
+  It can still read any file in the repository: keep secrets out of it with agy's own
+  deny rules (settings.json).
+- Files that usually hold secrets (.env, keys, credentials; any case) are left out of the
+  diff, and the run stops if any line of the diff looks like a secret (see --allow-secret-like).
 
 Examples:
   python review.py --repo . --out ../work                       # uncommitted changes vs HEAD
@@ -29,19 +32,21 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-# Neon finds the most (incl. subtle races); Hydrogen is fast and adds a second, independent vote
-DEFAULT_MODELS = ["gemini-4-neon-high", "gemini-4-hydrogen-high"]
+# Neon finds the most (incl. subtle races). Add --model gemini-4-hydrogen-high for a fast second vote.
+DEFAULT_MODELS = ["gemini-4-neon-high"]
 
-# left out of the diff sent to agy
+# left out of the diff sent to agy (case-insensitive: .ENV, Credentials.json, server.KEY ...)
 SECRET_PATHS = [
-    ":(exclude,glob)**/.env", ":(exclude,glob)**/.env.*", ":(exclude,glob)**/*.pem",
-    ":(exclude,glob)**/*.key", ":(exclude,glob)**/id_rsa*", ":(exclude,glob)**/id_ed25519*",
-    ":(exclude,glob)**/*credentials*.json", ":(exclude,glob)**/secrets.*", ":(exclude,glob)**/*.secret",
+    f":(exclude,glob,icase){p}" for p in (
+        "**/.env", "**/.env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*",
+        "**/*credentials*.json", "**/secrets.*", "**/*.secret",
+    )
 ]
 SECRET_LINE = re.compile(
     r"(AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{35}|ghp_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{40,}"
     r"|sk-[A-Za-z0-9_\-]{20,}|xox[abprs]-[0-9A-Za-z\-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
-    r"|(?i:(api[_-]?key|secret|token|password)\s*[:=]\s*['\"][^'\"\s]{12,}['\"]))"
+    # api_key = "…" / "api_key": "…" / 'password': '…' / token: "…"
+    r"|(?i:(api[_-]?key|secret|token|password)['\"]?\s*[:=]\s*['\"][^'\"\s]{12,}['\"]))"
 )
 
 SCHEMA = {
@@ -97,7 +102,10 @@ def decode(raw: bytes) -> str:
         return raw.decode(locale.getpreferredencoding(False), "replace")
 
 
-def parse_json_tail(text: str):
+def parse_json_tail(text):
+    """agy's own --output-format json result: one JSON line, maybe after a warning line."""
+    if not text:
+        return None
     for line in reversed(text.strip().splitlines()):
         line = line.strip()
         if line.startswith("{"):
@@ -114,6 +122,56 @@ def parse_json_tail(text: str):
     return None
 
 
+FENCE = re.compile(r"```(?:json)?\s*\n(.*?)\n\s*```", re.S)
+
+
+def parse_answer(text):
+    """The model's answer when structured output is missing: find the object that holds `findings`.
+
+    The answer may be plain JSON, JSON in a ```json fence, or JSON after some prose. Never take an
+    inner object (a single finding) for the whole answer.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    candidates = [text.strip(), *(m.group(1) for m in FENCE.finditer(text))]
+    for c in candidates:
+        try:
+            obj = json.loads(c)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "findings" in obj:
+            return obj
+    dec = json.JSONDecoder()
+    for m in re.finditer(r"\{", text):
+        try:
+            obj, _ = dec.raw_decode(text, m.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "findings" in obj:
+            return obj
+    return None
+
+
+def clean_findings(raw):
+    """Keep only well-formed findings; agy may send null or odd types."""
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for f in raw:
+        if not isinstance(f, dict) or not f.get("file"):
+            continue
+        try:
+            line = int(f.get("line") or 0)
+        except (TypeError, ValueError):
+            line = 0
+        try:
+            conf = float(f.get("confidence") or 0)
+        except (TypeError, ValueError):
+            conf = 0.0
+        out.append(dict(f, line=line, confidence=conf))
+    return out
+
+
 def git(repo: Path, *args) -> str:
     r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True)
     if r.returncode != 0:
@@ -126,7 +184,13 @@ def build_diff(repo: Path, a) -> tuple[str, str]:
     common = ["--no-color", "--no-ext-diff", "-U8"]
     intent = ""
     if a.commit:
-        diff = git(repo, "show", "--format=", *common, a.commit, "--", ".", *SECRET_PATHS)
+        parents = git(repo, "rev-list", "--parents", "-n", "1", a.commit).split()[1:]
+        if len(parents) > 1:
+            # a merge commit: review what it brought into the first parent (git show would give a
+            # combined diff, empty for a clean merge)
+            diff = git(repo, "diff", *common, f"{a.commit}^1", a.commit, "--", ".", *SECRET_PATHS)
+        else:
+            diff = git(repo, "show", "--format=", *common, a.commit, "--", ".", *SECRET_PATHS)
         intent = git(repo, "log", "-1", "--format=%s%n%n%b", a.commit).strip()
     elif a.base:
         mb = git(repo, "merge-base", a.base, "HEAD").strip()
@@ -140,12 +204,20 @@ def build_diff(repo: Path, a) -> tuple[str, str]:
 
 
 def secret_like_lines(diff: str):
+    """Every line that is sent counts: added, removed and context lines alike."""
     hits = []
     file = None
+    in_hunk = False
     for line in diff.splitlines():
-        if line.startswith("+++ "):
-            file = line[6:] if line.startswith("+++ b/") else line[4:]
-        elif line.startswith("+") and SECRET_LINE.search(line):
+        if line.startswith("diff --git "):
+            in_hunk = False
+            file = line.split(" b/", 1)[-1]
+        elif line.startswith("@@"):
+            in_hunk = True
+        elif not in_hunk:
+            if line.startswith("+++ b/"):
+                file = line[6:]
+        elif line[:1] in ("+", "-", " ") and SECRET_LINE.search(line):
             hits.append({"file": file, "text": line[:120]})
     return hits
 
@@ -165,16 +237,29 @@ def run_model(model: str, prompt: str, repo: Path, work: Path, schema_path: Path
         out.update(status="ERROR", exit_code=r.returncode, stdout=decode(r.stdout)[-1500:],
                    stderr=decode(r.stderr)[-1500:], findings=[])
         return out
+    response = res.get("response") if isinstance(res.get("response"), str) else ""
     data = res.get("structured_output")
-    if not isinstance(data, dict):
-        data = parse_json_tail(res.get("response", "")) or {}
+    structured = isinstance(data, dict)
+    if not structured:
+        data = parse_answer(response) or {}
+    notes = data.get("notes")
     out.update(status=res.get("status"), conversation_id=res.get("conversation_id"),
-               denied_actions=res.get("denied_actions", []),
-               findings=data.get("findings", []), notes=data.get("notes", ""),
-               usage=res.get("usage"))
-    if not isinstance(res.get("structured_output"), dict) and not data:
-        out["response"] = res.get("response", "")[-3000:]
+               denied_actions=res.get("denied_actions") or [],
+               findings=clean_findings(data.get("findings")),
+               notes=notes if isinstance(notes, str) else "",
+               structured=structured, usage=res.get("usage"))
+    if not structured:
+        # keep the raw answer so a human can read what parsing may have missed
+        out["response"] = response[-3000:]
     return out
+
+
+def run_model_safe(*args):
+    """One model failing must not lose the other models' results."""
+    try:
+        return run_model(*args)
+    except Exception as e:  # noqa: BLE001 - report any failure as this model's result
+        return {"model": args[0], "status": "ERROR", "error": f"{type(e).__name__}: {e}", "findings": []}
 
 
 def merge(results, near: int):
@@ -250,9 +335,9 @@ def main():
     prompt = GUARD + TASK.format(repo=repo, diff=diff_path, intent=intent_text)
     (work / "ask.txt").write_text(prompt, encoding="utf-8")
 
-    models = a.model or DEFAULT_MODELS
+    models = list(dict.fromkeys(a.model or DEFAULT_MODELS))  # same model twice would overwrite its result file
     with ThreadPoolExecutor(max_workers=len(models)) as ex:
-        results = list(ex.map(lambda m: run_model(m, prompt, repo, work, schema_path, a.agy, a.timeout), models))
+        results = list(ex.map(lambda m: run_model_safe(m, prompt, repo, work, schema_path, a.agy, a.timeout), models))
     for r in results:
         (work / f"result_{r['model']}.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -261,7 +346,8 @@ def main():
         "repo": str(repo),
         "diff": str(diff_path),
         "diff_files": len(re.findall(r"^\+\+\+ ", diff, flags=re.M)),
-        "models": [{k: r.get(k) for k in ("model", "status", "seconds", "denied_actions")}
+        "models": [{k: r.get(k) for k in ("model", "status", "seconds", "denied_actions", "structured", "error")
+                    if k in r}
                    | {"findings": len(r.get("findings", []))} for r in results],
         "findings": groups,
         "notes": {r["model"]: r.get("notes", "") for r in results if r.get("notes")},
