@@ -1,5 +1,11 @@
 # agy-media
 
+> [!IMPORTANT]
+> **このリポジトリは [gemini-buddy-mcp](https://github.com/holmesfems/gemini-buddy-mcp) に移りました（アーカイブ済み）。**
+> ここにある機能（画像・動画・音声の解析、下ごしらえと計測のスクリプト、agy-review）は、すべて gemini-buddy-mcp の MCP ツールとして使えます。そちらでは API での画像生成・TTS と、`session_id` で続きから頼める機能も増えています。
+>
+> English: **Moved to [gemini-buddy-mcp](https://github.com/holmesfems/gemini-buddy-mcp)** (this repository is archived). Every feature here is available there as MCP tools.
+
 [Claude Code](https://claude.com/claude-code) から [Antigravity CLI](https://antigravity.google/)（`agy`、Gemini）を呼び出して、Claude の苦手なところを補うためのスキルです。
 
 - **画像を作る**：agy の画像生成で作り、できた画像を手元のフォルダに取り出す
