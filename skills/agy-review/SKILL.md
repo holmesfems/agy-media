@@ -1,6 +1,6 @@
 ---
 name: agy-review
-description: Claude Code から Antigravity CLI（agy、Gemini）にコードの変更（git diff・ブランチ・コミット）を読むだけでレビューさせ、Claude とは別に学習されたモデルの目で見落としを拾うスキル。Neon と Hydrogen を並べて走らせ、同じ場所を指した指摘をまとめ、Claude が 1 件ずつ実際のコードで確かめてから報告する。「agy でレビューして」「Gemini にもレビューさせて」「セカンドオピニオン」「別のモデルの目で見て」「Claude 以外にもレビューさせたい」「この PR を Gemini で」のように、agy・Gemini を使ったコードレビューの話が出たら、明示的な指定がなくても使うこと。Use for an independent second-opinion code review of a diff through the agy (Antigravity) CLI.
+description: Claude Code から Antigravity CLI（agy、Gemini）にコードの変更（git diff・ブランチ・コミット）を読むだけでレビューさせ、Claude とは別に学習されたモデルの目で見落としを拾うスキル。既定は Neon で、Hydrogen などを並べて走らせると同じ場所を指した指摘をまとめ、Claude が 1 件ずつ実際のコードで確かめてから報告する。「agy でレビューして」「Gemini にもレビューさせて」「セカンドオピニオン」「別のモデルの目で見て」「Claude 以外にもレビューさせたい」「この PR を Gemini で」のように、agy・Gemini を使ったコードレビューの話が出たら、明示的な指定がなくても使うこと。Use for an independent second-opinion code review of a diff through the agy (Antigravity) CLI.
 ---
 
 # agy-review
@@ -20,7 +20,7 @@ Gemini は Claude と別に学習されているので、ミスの出方がず�
    python -I <skill>/scripts/review.py --repo <リポジトリ> --commit <sha> --out <work>      # 1 コミット
    ```
    - `<work>` はリポジトリの外（scratchpad など）に置く。`diff.patch`・`ask.txt`・モデルごとの `result_<model>.json`・まとめの `review.json` が入る。
-   - 既定で `gemini-4-neon-high` と `gemini-4-hydrogen-high` を並べて走らせる（`--model` で変えられる、くり返し指定可）。数十行〜数百行の差分で 1.5〜4 分。長いので Bash の `run_in_background` で回す。
+   - 既定は `gemini-4-neon-high` だけ。`--model` で変えられ、くり返し指定すると並べて走らせる（例: `--model gemini-4-neon-high --model gemini-4-hydrogen-high`）。数十行〜数百行の差分で 3〜5 分。長いので Bash の `run_in_background` で回す。
    - 変更の意図はコミットメッセージから自動で入る。コミット前の変更なら `--intent "…"` で、ユーザーの言葉で書く。
 2. **`review.json` を Read で読む。** `findings` は場所ごとにまとめた指摘で、`agreed`（いくつのモデルが同じ場所を挙げたか）・`severity`・各モデルの `summary` と `failure_scenario` が入る。
 3. **1 件ずつ Claude が確かめる。** その行と、呼び出し元・呼び出し先を Read で読み、`failure_scenario` をコードの上でたどる。テストがあれば走らせる。
@@ -34,9 +34,12 @@ Gemini は Claude と別に学習されているので、ミスの出方がず�
 
 1. **Claude の意見を agy に渡さない。** `--intent` には作者の意図だけを書く。Claude のレビュー結果や「ここが怪しい」を入れると、別の目で見る意味がなくなる。
    Claude 自身もレビューするなら、agy の結果を読む前に済ませ、あとで突き合わせる（両方が挙げたもの・片方だけのもの）。
-2. **コードは Google に送られる。** `review.py` は `.env`・鍵・credentials のファイルを差分から外し、追加した行に API キーや秘密鍵らしい文字列があれば何も送らずに止まる（`STOPPED`）。
+2. **コードは Google に送られる。** `review.py` は `.env`・鍵・credentials のファイルを差分から外し（大文字小文字は問わない）、
+   差分のどの行（足した行・消した行・前後の行）にでも API キーや秘密鍵らしい文字列があれば、何も送らずに止まる（`STOPPED`）。
    止まったら、その行をユーザーに見せて判断してもらう。`--allow-secret-like` はユーザーが「送ってよい」と言ったときだけ。
-   agy 側の settings.json でも `.env` の読み書きを deny にしておくとよい。
+   **ただし agy はリポジトリ全体を読める**（呼び出し元・呼び出し先を読ませるため）。差分の外にあるファイルを開かせない守りは、
+   プロンプトでのお願いと、agy 側の settings.json の deny（`read_file(regex:.*\.env.*)` など）だけ。
+   秘密を置いたファイルがリポジトリにあるなら、agy の deny に足してから使う。初めて使うリポジトリでは、ユーザーに deny の設定を確かめてもらう。
 3. **`--dangerously-skip-permissions` は使わない。** agy は plan モード（読むだけ）で、端末・ウェブ・リポジトリの外のファイルを使わないよう指示してある。`denied_actions` が出たら、agy が何かを実行しようとした印。結果は使えるが、ユーザーに伝える。
 4. **大きい差分は分ける。** 既定で 400 KB を超えると止まる。コミットごと（`--commit`）や、フォルダを絞ったブランチに分けてレビューする。
 
@@ -50,7 +53,8 @@ Gemini は Claude と別に学習されているので、ミスの出方がず�
 
 - 埋めたバグ（`Math.min`→`Math.max`、`<`→`<=`、`-`→`+`、`!==`→`===`）は単純な取り違えで、どのモデルも具体的な入力と結果まで正しく書いた。外れの指摘は 0 件。
 - **差が出たのは、埋めていない本物の不具合**で、見つけたのは Neon だけだった。微妙な競合や仕様の食い違いは Neon が強い。
-- Hydrogen は速く、Neon と同じ場所を挙げると「2 モデルが一致」の目印になる。急ぐときは `--model gemini-4-hydrogen-high` だけでもよい。
+- Hydrogen は速い（Neon の半分以下の時間）が、挙げる数は少なく、どれも Neon と同じ場所だった。そこで既定は Neon だけにした。急ぐときは `--model gemini-4-hydrogen-high`、2 モデルの一致を目印にしたいときは両方を並べる。
+- agy-media 自身の 0.3.0（新しい review.py を含む 7 ファイル・約 380 行）でも、Neon は 6 件（すべて本物）、Hydrogen は 2 件（どちらも Neon と同じ場所）を挙げた。
 - 1 回の試しなので、ほかのリポジトリで外れが多いようなら、ここを書き直す。
 
 ## つまずきやすい点
@@ -59,6 +63,8 @@ Gemini は Claude と別に学習されているので、ミスの出方がず�
 |---|---|
 | `empty diff` | 指定の差分が空。`--base` / `--commit` / `--staged` を確かめる |
 | `STOPPED`（secret-like） | 追加した行が秘密の値に見えた。行をユーザーに見せて判断してもらう |
-| `findings` が空で `response` だけある | agy が JSON の形で答えなかった。`result_<model>.json` の `response` を読む |
+| `findings` が空で `response` だけある | agy が JSON の形で答えなかった（`structured: false`）。`result_<model>.json` の `response` を読む |
+| モデルの `status` が `ERROR` で `error` がある | そのモデルだけ失敗した。ほかのモデルの結果は `review.json` に残る |
+| マージコミットを `--commit` で渡した | 1 つ目の親との差（マージで入ってきた変更）をレビューする |
 | 指摘の行番号が少しずれる | 新しい版の行番号で答えるよう頼んでいるが、ずれることがある。前後を読んで探す |
 | TIMEOUT | 差分が大きい・モデルが考え込んだ。分けるか `--timeout` を延ばす |

@@ -6,7 +6,7 @@
 - **BGM を確かめる**：書き出した動画を agy に見て・聞いてもらい、曲調が場面に合うか、つなぎ目は自然かを判断してもらう。声と BGM の音量差はローカルで測る
 - **音を聞く**：文字起こし、話者分け、発音・アクセントの違和感の指摘
 - **画像・動画を見る**：場面の説明、物のおおよその座標
-- **コードレビューのセカンドオピニオン**（`agy-review`）：git の差分を agy に読むだけでレビューさせ、Neon と Hydrogen の指摘を場所ごとにまとめる。Claude と別に学習されたモデルなので、見落としの癖がずれる。指摘は Claude が実際のコードで確かめてから報告する
+- **コードレビューのセカンドオピニオン**（`agy-review`）：git の差分を agy に読むだけでレビューさせ、既定は Neon。複数のモデルを並べると、同じ場所の指摘をまとめる。Claude と別に学習されたモデルなので、見落としの癖がずれる。指摘は Claude が実際のコードで確かめてから報告する
 - **機械的な作業はローカルで**：ffmpeg による切り出し・コマ画像化・座標の目盛り、無音区間・ラウドネス・スペクトログラム、OpenCV での追跡、結果の描き込み確認
 
 > English: A small Claude Code skill that delegates image generation and image / video / audio understanding to the Antigravity CLI (`agy`, Gemini), with local helper scripts (ffmpeg, OpenCV, Pillow) to prepare inputs and to check the answers. It never runs agy with `--dangerously-skip-permissions`.
@@ -20,6 +20,12 @@
 
 ```
 pip install -r requirements.txt
+```
+
+agy を呼ばないテスト（agy-review の差分づくり・秘密の検知・答えの読み取り）：
+
+```
+python -m unittest discover -s tests
 ```
 
 ## 入れ方
@@ -65,7 +71,7 @@ Claude Code のプラグインとして入れる場合：
 | 発音の違和感の指摘 | 12 件（多すぎる） | 3 件 | 3 件 | どれも候補扱い |
 | 動画 40 秒（ロゴ・タイトル・セリフ） | 正しい／86 秒 | 正しい／52 秒 | 正しい／45 秒 | Hydrogen |
 | 目盛り付きコマの座標（6 か所） | 字幕を 140 px 外す | 2 px 以内 | 縦に 8 px ずれ | Neon |
-| コードレビュー（4 つ埋めたバグ） | 4/4／161 秒 | 4/4 ＋本物の競合 1 件／217 秒 | 4/4／90 秒 | Neon ＋ Hydrogen |
+| コードレビュー（4 つ埋めたバグ） | 4/4／161 秒 | 4/4 ＋本物の競合 1 件／217 秒 | 4/4／90 秒 | Neon |
 
 `agy_run.py` の既定のモデルは `gemini-4-hydrogen-high`。BGM の音量については、3 モデルとも「下げて」と答えたが、測ると目安の範囲だった。音量は `mix_balance.py` などの数値で判断する。
 
