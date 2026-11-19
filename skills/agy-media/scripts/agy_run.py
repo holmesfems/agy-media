@@ -7,7 +7,7 @@
 
 Examples:
   python agy_run.py --prompt "Generate an image of an apple tree" --out ./out
-  python agy_run.py --prompt-file ask.txt --dir ./frames --model gemini-3.8-flash-high
+  python agy_run.py --prompt-file ask.txt --dir ./frames --model gemini-4-hydrogen-high
 """
 import argparse
 import json
@@ -85,7 +85,7 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--prompt", help="prompt text")
     g.add_argument("--prompt-file", help="UTF-8 text file holding the prompt")
-    ap.add_argument("--model", default="gemini-3.8-flash-high", help="see `agy models`")
+    ap.add_argument("--model", default="gemini-4-hydrogen-high", help="see `agy models`")
     ap.add_argument("--dir", action="append", default=[], help="folder agy may read (repeatable)")
     ap.add_argument("--out", help="copy generated media here")
     ap.add_argument("--timeout", type=int, default=600, help="seconds (agy --print-timeout)")
