@@ -6,6 +6,7 @@
 - **BGM を確かめる**：書き出した動画を agy に見て・聞いてもらい、曲調が場面に合うか、つなぎ目は自然かを判断してもらう。声と BGM の音量差はローカルで測る
 - **音を聞く**：文字起こし、話者分け、発音・アクセントの違和感の指摘
 - **画像・動画を見る**：場面の説明、物のおおよその座標
+- **コードレビューのセカンドオピニオン**（`agy-review`）：git の差分を agy に読むだけでレビューさせ、Neon と Hydrogen の指摘を場所ごとにまとめる。Claude と別に学習されたモデルなので、見落としの癖がずれる。指摘は Claude が実際のコードで確かめてから報告する
 - **機械的な作業はローカルで**：ffmpeg による切り出し・コマ画像化・座標の目盛り、無音区間・ラウドネス・スペクトログラム、OpenCV での追跡、結果の描き込み確認
 
 > English: A small Claude Code skill that delegates image generation and image / video / audio understanding to the Antigravity CLI (`agy`, Gemini), with local helper scripts (ffmpeg, OpenCV, Pillow) to prepare inputs and to check the answers. It never runs agy with `--dangerously-skip-permissions`.
@@ -37,6 +38,8 @@ Claude Code のプラグインとして入れる場合：
 | ファイル | 役割 |
 |---|---|
 | `skills/agy-media/SKILL.md` | Claude への手順書（いつ・どう agy を使うか、確かめ方） |
+| `skills/agy-review/SKILL.md` | コードレビューの手順書（差分の選び方、指摘の確かめ方、送らないもの） |
+| `skills/agy-review/scripts/review.py` | 差分を作って複数のモデルに並べてレビューさせ、同じ場所の指摘をまとめる |
 | `scripts/agy_run.py` | agy を頭なしで実行して JSON で結果を返し、生成された画像を取り出す |
 | `scripts/frames.py` | 動画の範囲をコマ画像に（切り抜き・座標の目盛り・一覧画像） |
 | `scripts/audio.py` | 音声の切り出し・波形・スペクトログラム・ラウドネス・無音区間 |
@@ -51,6 +54,20 @@ Claude Code のプラグインとして入れる場合：
 - **BGM の確認**：40 秒の mp4（720p）を渡すと、ロゴの文字・画面のタイトル・最初のセリフを正しく答え、映像と音の両方を理解できていた（約 1 分半）。「BGM が大きめ」という全体の判断は、測った値（声と BGM の差が平均 8.8 dB）と合っていた。一方、「声が埋もれている」と挙げた時刻は外れていたため、場所の特定は `mix_balance.py` で測る。
 - **動画の座標**：ゲーム録画の敵の位置は、目盛りなしでは約 100 px ずれた。目盛りを入れると、止まっている間は 20〜30 px、動いている間は 50〜90 px のずれ。おおよその位置や動きの流れには使えるが、精密な位置合わせには向かない。
 - **OpenCV の追跡**：エフェクトが激しく重なる対象は見失いやすい。素直な対象向け。
+
+## Gemini 4 のモデルの比べ（agy 1.5.12）
+
+同じ素材で Argon・Neon・Hydrogen（いずれも High）を比べ、使うモデルを決めた。
+
+| 試したこと | Argon | Neon | Hydrogen | 使うモデル |
+|---|---|---|---|---|
+| 音声 40 秒の文字起こし・話者分け | 本文・話者とも正しい／70 秒 | 同じ／103 秒 | 同じ／49 秒 | Hydrogen |
+| 発音の違和感の指摘 | 12 件（多すぎる） | 3 件 | 3 件 | どれも候補扱い |
+| 動画 40 秒（ロゴ・タイトル・セリフ） | 正しい／86 秒 | 正しい／52 秒 | 正しい／45 秒 | Hydrogen |
+| 目盛り付きコマの座標（6 か所） | 字幕を 140 px 外す | 2 px 以内 | 縦に 8 px ずれ | Neon |
+| コードレビュー（4 つ埋めたバグ） | 4/4／161 秒 | 4/4 ＋本物の競合 1 件／217 秒 | 4/4／90 秒 | Neon ＋ Hydrogen |
+
+`agy_run.py` の既定のモデルは `gemini-4-hydrogen-high`。BGM の音量については、3 モデルとも「下げて」と答えたが、測ると目安の範囲だった。音量は `mix_balance.py` などの数値で判断する。
 
 ## 注意
 
